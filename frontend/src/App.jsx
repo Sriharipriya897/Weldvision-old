@@ -1,340 +1,174 @@
 
-import { useState } from "react";
+import React, { useState } from 'react';
+import Header from './components/Header';
+import UploadBox from './components/UploadBox';
+import Camera from './components/Camera';
+import Loading from './components/Loading';
+import Result from './components/Result';
+import { AlertCircle } from 'lucide-react';
 
-const API_BASE_URL = "https://weldvision-backend.onrender.com";
+const API_BASE_URL = 'https://weldvision-backend.onrender.com';
 
 export default function App() {
-  const [file, setFile] = useState(null);
-  const [preview, setPreview] = useState("");
-  const [result, setResult] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [pdfLoading, setPdfLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [selectedImage, setSelectedImage] = useState(null);
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [status, setStatus] = useState('idle');
+  const [inspectionResult, setInspectionResult] = useState(null);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [errorMessage, setErrorMessage] = useState(null);
 
-  // Image Upload
-  const handleFileChange = (event) => {
-    const selectedFile = event.target.files?.[0];
+  const handleImageSelected = (imageObj) => {
+    setSelectedImage(imageObj);
+    setErrorMessage(null);
 
-    if (!selectedFile) return;
-
-    if (!selectedFile.type.startsWith("image/")) {
-      setError("Please select a valid image file.");
-      return;
+    if (!imageObj) {
+      setStatus('idle');
+      setInspectionResult(null);
     }
-
-    if (preview) {
-      URL.revokeObjectURL(preview);
-    }
-
-    setFile(selectedFile);
-    setPreview(URL.createObjectURL(selectedFile));
-    setResult(null);
-    setError("");
   };
 
-  // AI Weld Inspection
-  const handleInspect = async () => {
-    if (!file) {
-      setError("Please upload a weld image first.");
-      return;
-    }
+  const startInspection = async () => {
+    if (!selectedImage || !selectedImage.file) return;
 
-    setLoading(true);
-    setError("");
-    setResult(null);
+    setStatus('analyzing');
+    setErrorMessage(null);
+    setInspectionResult(null);
+
+    const formData = new FormData();
+    formData.append('file', selectedImage.file);
 
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-
-      const response = await fetch(
-        `${API_BASE_URL}/api/inspect`,
-        {
-          method: "POST",
-          body: formData,
-        }
-      );
-
-      const responseText = await response.text();
+      const response = await fetch(`${API_BASE_URL}/api/inspect`, {
+        method: 'POST',
+        body: formData,
+      });
 
       if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
         throw new Error(
-          responseText || `Inspection failed: ${response.status}`
+          errorData.detail || `Inspection failed (${response.status}). Please try again.`
         );
       }
 
-      if (!responseText) {
-        throw new Error("Backend returned an empty response.");
+      const data = await response.json();
+
+      if (!data || typeof data !== 'object') {
+        throw new Error('Invalid inspection response from backend.');
       }
 
-      let data;
-
-      try {
-        data = JSON.parse(responseText);
-      } catch {
-        throw new Error("Backend returned invalid JSON.");
-      }
-
-      setResult(data);
+      setTimeout(() => {
+        setInspectionResult(data);
+        setStatus('result');
+      }, 1200);
 
     } catch (err) {
-      console.error("Inspection request error:", err);
-      setError(err.message || "Inspection failed. Please try again.");
-
-    } finally {
-      setLoading(false);
+      console.error('Inspection request error:', err);
+      setErrorMessage(
+        err.message || 'Failed to connect to WeldVision backend inspection server.'
+      );
+      setStatus('error');
     }
   };
 
-  // PDF Report Download
-  const handleDownloadPDF = async () => {
-    if (!result) {
-      setError("Please complete an inspection first.");
-      return;
-    }
+  const handleDownloadPdf = async (resultData) => {
+    const payload = resultData || inspectionResult;
+    if (!payload) return;
 
-    setPdfLoading(true);
-    setError("");
+    setIsDownloadingPdf(true);
 
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/api/download-pdf`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(result),
-        }
-      );
+      const response = await fetch(`${API_BASE_URL}/api/download-pdf`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
 
       if (!response.ok) {
-        const message = await response.text();
-        throw new Error(message || "PDF generation failed.");
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(
+          errorData.detail || 'Failed to generate PDF report.'
+        );
       }
 
       const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
 
-      if (blob.size === 0) {
-        throw new Error("Generated PDF is empty.");
-      }
+      a.href = url;
+      a.download = `WeldVision_Inspection_Report_${Date.now()}.pdf`;
 
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
 
-      link.href = url;
-      link.download = "WeldVision_Inspection_Report.pdf";
-
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-
-      URL.revokeObjectURL(url);
+      window.URL.revokeObjectURL(url);
 
     } catch (err) {
-      console.error("PDF download error:", err);
-      setError(err.message || "PDF download failed.");
-
+      console.error('PDF download error:', err);
+      alert(err.message || 'Error downloading PDF report. Please try again.');
     } finally {
-      setPdfLoading(false);
+      setIsDownloadingPdf(false);
     }
-  };
-
-  // Reset
-  const handleReset = () => {
-    if (preview) {
-      URL.revokeObjectURL(preview);
-    }
-
-    setFile(null);
-    setPreview("");
-    setResult(null);
-    setError("");
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white">
+    <div className="min-h-screen">
+      <Header />
 
-      {/* Header */}
-      <header className="border-b border-slate-800 bg-slate-900 px-6 py-5">
-        <h1 className="text-3xl font-bold">
-          WeldVision
-          <span className="text-orange-500">.AI</span>
-        </h1>
-
-        <p className="mt-1 text-sm text-slate-400">
-          AI-Powered Industrial Welding Inspection and Weld Defect Analysis Platform
-        </p>
-
-        <p className="mt-3 text-sm text-emerald-400">
-          ● Weld Quality Engine Active
-        </p>
-      </header>
-
-      <main className="mx-auto max-w-5xl px-5 py-10">
-
-        {/* Upload Section */}
-        <section className="rounded-2xl border border-slate-700 bg-slate-900 p-6">
-
-          <h2 className="mb-2 text-2xl font-bold">
-            Upload Weld Image
-          </h2>
-
-          <p className="mb-6 text-sm text-slate-400">
-            Upload a welding image to detect defects using YOLO AI.
-          </p>
-
-          <input
-            type="file"
-            accept="image/*"
-            onChange={handleFileChange}
-            className="block w-full rounded-lg border border-slate-700 bg-slate-800 p-3 text-sm"
+      <main className="container mx-auto px-4 py-8">
+        {status === 'idle' && (
+          <UploadBox
+            onImageSelected={handleImageSelected}
+            onStartInspection={startInspection}
+            onOpenCamera={() => setIsCameraOpen(true)}
+            selectedImage={selectedImage}
           />
-
-          {preview && (
-            <div className="mt-6">
-
-              <img
-                src={preview}
-                alt="Uploaded weld"
-                className="max-h-96 rounded-xl border border-slate-700 object-contain"
-              />
-
-              <p className="mt-2 text-sm text-slate-400">
-                {file?.name}
-              </p>
-
-            </div>
-          )}
-
-          <div className="mt-6 flex flex-wrap gap-3">
-
-            <button
-              onClick={handleInspect}
-              disabled={!file || loading}
-              className="rounded-lg bg-orange-500 px-6 py-3 font-semibold text-white hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {loading ? "Inspecting..." : "Inspect Weld"}
-            </button>
-
-            <button
-              onClick={handleReset}
-              className="rounded-lg border border-slate-600 px-6 py-3 hover:bg-slate-800"
-            >
-              Reset
-            </button>
-
-          </div>
-
-          {loading && (
-            <p className="mt-5 text-sm text-orange-400">
-              AI model is analyzing your weld image. Please wait...
-            </p>
-          )}
-
-          {error && (
-            <div className="mt-5 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-300">
-              {error}
-            </div>
-          )}
-
-        </section>
-
-        {/* Inspection Results */}
-        {result && (
-          <section className="mt-8 rounded-2xl border border-slate-700 bg-slate-900 p-6">
-
-            <h2 className="mb-5 text-2xl font-bold">
-              Inspection Results
-            </h2>
-
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-
-              <div className="rounded-xl bg-slate-800 p-4">
-                <p className="text-sm text-slate-400">
-                  Quality Score
-                </p>
-
-                <p className="mt-2 text-3xl font-bold text-orange-400">
-                  {result.quality_assessment?.quality_score ??
-                    result.quality_score ??
-                    "N/A"}
-                </p>
-              </div>
-
-              <div className="rounded-xl bg-slate-800 p-4">
-                <p className="text-sm text-slate-400">
-                  Overall Status
-                </p>
-
-                <p className="mt-2 text-xl font-bold text-emerald-400">
-                  {result.quality_assessment?.overall_status ??
-                    result.quality_status ??
-                    result.inspection_status ??
-                    "Complete"}
-                </p>
-              </div>
-
-              <div className="rounded-xl bg-slate-800 p-4">
-                <p className="text-sm text-slate-400">
-                  Total Defects
-                </p>
-
-                <p className="mt-2 text-3xl font-bold">
-                  {result.summary?.total_defects ??
-                    result.total_defects ??
-                    "N/A"}
-                </p>
-              </div>
-
-            </div>
-
-            {/* Annotated Image */}
-            {(result.annotated_image || result.summary?.annotated_image) && (
-              <div className="mt-7">
-                <h3 className="mb-3 text-lg font-semibold">
-                  Annotated Inspection Image
-                </h3>
-
-                <img
-                  src={`data:image/jpeg;base64,${
-                    result.annotated_image || result.summary?.annotated_image
-                  }`}
-                  alt="AI annotated inspection"
-                  className="max-h-96 rounded-xl border border-slate-700 object-contain"
-                />
-              </div>
-            )}
-
-            <h3 className="mb-3 mt-7 text-lg font-semibold">
-              Complete Inspection Data
-            </h3>
-
-            <pre className="max-h-96 overflow-auto rounded-xl bg-slate-950 p-4 text-xs text-green-300">
-              {JSON.stringify(result, null, 2)}
-            </pre>
-
-            {/* PDF Download */}
-            <button
-              onClick={handleDownloadPDF}
-              disabled={pdfLoading}
-              className="mt-6 rounded-lg bg-emerald-600 px-6 py-3 font-semibold hover:bg-emerald-700 disabled:opacity-50"
-            >
-              {pdfLoading
-                ? "Generating PDF..."
-                : "Download PDF Report"}
-            </button>
-
-          </section>
         )}
 
+        {status === 'analyzing' && <Loading />}
+
+        {status === 'result' && inspectionResult && (
+          <Result
+            result={inspectionResult}
+            onDownloadPdf={handleDownloadPdf}
+            isDownloadingPdf={isDownloadingPdf}
+            onReset={() => {
+              setSelectedImage(null);
+              setInspectionResult(null);
+              setStatus('idle');
+              setErrorMessage(null);
+            }}
+          />
+        )}
+
+        {status === 'error' && (
+          <div className="mx-auto max-w-xl rounded-xl border border-red-200 bg-red-50 p-6 text-center">
+            <AlertCircle className="mx-auto mb-3 h-10 w-10 text-red-500" />
+            <h2 className="mb-2 text-lg font-semibold text-red-700">
+              Inspection Failed
+            </h2>
+            <p className="mb-4 text-sm text-red-600">{errorMessage}</p>
+            <button
+              onClick={startInspection}
+              className="rounded-lg bg-red-600 px-5 py-2 text-white hover:bg-red-700"
+            >
+              Try Again
+            </button>
+          </div>
+        )}
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-slate-800 bg-slate-900 px-5 py-6 text-center text-sm text-slate-400">
-        WeldVision AI © 2026 — Industrial Welding Inspection System
-      </footer>
-
+      {isCameraOpen && (
+        <Camera
+          onImageCaptured={(imageObj) => {
+            handleImageSelected(imageObj);
+            setIsCameraOpen(false);
+          }}
+          onClose={() => setIsCameraOpen(false)}
+        />
+      )}
     </div>
   );
 }
