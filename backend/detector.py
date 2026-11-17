@@ -234,7 +234,7 @@ class WeldDetector(BaseDetector):
         results = self.model.predict(
             img_bgr,
             conf=0.05,
-            imgsz=480,
+            imgsz=416,
             device=self.device,
             verbose=False
         )
